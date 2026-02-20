@@ -1,13 +1,13 @@
 import db from "../db/db.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import dotenv from "dotenv";
+import crypto from "crypto";
+import { v4 as uuidv4 } from "uuid";
 import { generateStructure } from "../services/geminiService.js";
 import { fetchCourseNotes } from "../services/notesService.js";
 import { generateOverview } from "../services/courseOverviewService.js";
 import { generateExamQuestions } from "../services/examQuestionService.js";
-
-dotenv.config();
+import { fetchCertificateFromChain,storeCertificateOnChain } from "../services/algoService.js";
 
 export const registerUser = async (req, res) => {
     try {
@@ -320,7 +320,6 @@ export const createExam = async (req, res) => {
 
 export const submitExam = async (req, res) => {
   try {
-
     const userId = req.user.id;
     const { examId, answers } = req.body;
 
@@ -337,21 +336,73 @@ export const submitExam = async (req, res) => {
       }
     });
 
+    const total = questions.length;
+    const percentage = (score / total) * 100;
+    const passed = percentage >= 60;
+
     await db.query(
       "INSERT INTO exam_attempts (user_id, exam_id, score) VALUES (?, ?, ?)",
       [userId, examId, score]
     );
 
+    let certificate = null;
+
+    if (passed) {
+
+      // 🔥 Generate Unique Certificate ID
+      const certificateId = uuidv4();
+
+      // 🔥 Create Hash
+      const rawData = `${userId}-${examId}-${score}-${certificateId}`;
+      const certificateHash = crypto
+        .createHash("sha256")
+        .update(rawData)
+        .digest("hex");
+
+      // 🔥 Store on Algorand
+      const txId = await storeCertificateOnChain(
+        certificateId,
+        certificateHash
+      );
+
+      // 🔥 Save in DB
+      await db.query(
+        `INSERT INTO certificates 
+         (user_id, exam_id, certificate_id, certificate_hash, blockchain_tx_id)
+         VALUES (?, ?, ?, ?, ?)`,
+        [userId, examId, certificateId, certificateHash, txId]
+      );
+
+      // 🔥 Get exam title
+const [exam] = await db.query(
+  "SELECT title FROM exams WHERE id = ?",
+  [examId]
+);
+
+certificate = {
+  certificateId,
+  txId,
+  title: exam[0]?.title || "Certification"
+};
+
+    }
+
     res.json({
       success: true,
       score,
-      total: questions.length
+      total,
+      percentage,
+      passed,
+      certificate
     });
 
   } catch (error) {
+    console.error("Submit Exam Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
+
+
 export const getExamQuestions = async (req, res) => {
   try {
     const { examId } = req.params;
@@ -371,3 +422,51 @@ export const getExamQuestions = async (req, res) => {
   }
 };
 
+export const verifyCertificate = async (req, res) => {
+  try {
+
+    const { certificateId } = req.params;
+
+    const [cert] = await db.query(
+      "SELECT * FROM certificates WHERE certificate_id = ?",
+      [certificateId]
+    );
+
+    if (cert.length === 0) {
+      return res.json({ valid: false });
+    }
+
+    const certificate = cert[0];
+
+    // 🔥 Recalculate Hash
+    const rawData = `${certificate.user_id}-${certificate.exam_id}-${certificate.score}-${certificate.certificate_id}`;
+
+    const recalculatedHash = crypto
+      .createHash("sha256")
+      .update(rawData)
+      .digest("hex");
+
+    // 🔥 Fetch From Blockchain
+    const chainHash = await fetchCertificateFromChain(certificateId);
+
+    if (!chainHash) {
+      return res.json({
+        valid: false,
+        reason: "Not found on blockchain"
+      });
+    }
+
+    const valid =
+      recalculatedHash === certificate.certificate_hash &&
+      chainHash === certificate.certificate_hash;
+
+    res.json({
+      valid,
+      certificate,
+      blockchainHash: chainHash
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

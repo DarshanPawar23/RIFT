@@ -8,7 +8,7 @@ export const generateExamQuestions = async (courseTitle, structuredCourse) => {
     const prompt = `
 You are a professional exam creator.
 
-Create 40 high-quality multiple choice questions for the course:
+Create 5 high-quality multiple choice questions for the course:
 
 Course Title: ${courseTitle}
 

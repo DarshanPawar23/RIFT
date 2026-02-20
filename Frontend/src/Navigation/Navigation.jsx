@@ -5,6 +5,7 @@ import Login from "../Pages/Login.jsx"
 import Home from "../Pages/Home.jsx"
 import Main from "../Pages/Main.jsx"
 import Exam from "../Pages/Exam.jsx"
+import CertificateDisplay from '../Components/CertificateDisplay.jsx';
 function Navigation(){
     return(
     <div>
@@ -15,6 +16,7 @@ function Navigation(){
                 <Route path="/Home" element={<Home />} />
                 <Route path="/Main" element={<Main />} />
                 <Route path="/exam" element={<Exam />} />
+                <Route path="/certificate/:id" element={<CertificateDisplay/>}/>
             </Routes>
         </Router>
     </div>
